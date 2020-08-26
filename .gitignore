@@ -35,5 +35,17 @@
 Release/
 Debug/
 .vs/
-out/
 CMakeSettings.json
+
+# CMake outputs
+# Do not ignore.
+# Instead run 'mkdir build; cd build; cmake ..; make'
+#cmake_install.cmake
+#CMakeCache.txt
+#CMakeFiles/
+#Makefile
+
+# Output directories
+build/
+out/
+
