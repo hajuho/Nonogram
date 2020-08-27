@@ -454,7 +454,7 @@ void runCommon(vector<vector<int>>& rows, vector<vector<int>>& cols)
     nono.show();
     if (success) printf("SUCCESS: ");
     else printf("FAILURE: ");
-    printf("took %lld us.", chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+    printf("took %lld us.\n", chrono::duration_cast<std::chrono::microseconds>(end - start).count());
 }
 
 void test1()
