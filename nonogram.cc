@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
+#define USE_HEURISTIC_INIT
+
 using namespace std;
 
 static const bool DEF_SHOW_PROGRESS = false;
@@ -16,10 +18,14 @@ static const int DEF_SLEEP_MS = 100;
 
 static chrono::milliseconds sleeps = chrono::milliseconds(DEF_SLEEP_MS);
 
-typedef unsigned long long bitm;
+// Up to 64 bit.
+typedef unsigned long long BitMask;
 
+// Segment represents contiguous filled points.
+// It includes the length, bitmask and movable range
+// in a row or a column.
 struct Segment {
-    bitm mask;
+    BitMask mask;
     int len;
     int min_shift;
     int max_shift;
@@ -28,183 +34,204 @@ struct Segment {
 class Nono {
 public:
     explicit Nono(vector<vector<int>>& rows, vector<vector<int>>& cols);
-    bool solve();
-    void show();
-    void setOption(bool showProgress, bool waitKey);
+    bool Solve();
+    void Show();
+    void SetOption(bool show_progress, bool wait_key);
 
 private:
-    bool show_progress = DEF_SHOW_PROGRESS;
-    bool wait_key = DEF_WAIT_KEY;
+    // Options
+    bool show_progress_ = DEF_SHOW_PROGRESS;
+    bool wait_key_ = DEF_WAIT_KEY;
 
-    bitm pos_masks[64];
+    // pos_masks_[n] = 1 << n
+    BitMask pos_masks_[64];
 
-    int nrow, ncol;
-    bitm full_row, full_col;
+    int num_row_, num_col_;
+    BitMask full_row_, full_col_;
 
-    vector<vector<Segment>> segments_row;
-    vector<vector<Segment>> segments_col;
+    vector<vector<Segment>> segments_row_;
+    vector<vector<Segment>> segments_col_;
 
-    vector<bitm> omasks_row;
-    vector<bitm> omasks_col;
-    vector<bitm> xmasks_row;
-    vector<bitm> xmasks_col;
+    // Updated mask for O and X marks.
+    // This is the progress of solving the puzzle.
+    // These value only increases bitwise
+    // until omask+xmask fills the row or column.
+    // The omasks_row_ and omasks_col_ pair or
+    // the xmasks_row_ and xmasks_col_ pair have
+    // redundant data, so they should be updated
+    // at the same function.
+    vector<BitMask> omasks_row_;
+    vector<BitMask> omasks_col_;
+    vector<BitMask> xmasks_row_;
+    vector<BitMask> xmasks_col_;
 
-    bitm common_omask, common_xmask;
+    // Temporary mask for processing a row or a column.
+    BitMask common_omask_, common_xmask_;
 
-    int line_runs;
+    int line_runs_;
 
-    void prepareLine(vector<Segment>& dst, vector<int>& src, int limit, int* sum);
-    bitm lenToBitMask(int len);
+    void PrepareLine(vector<Segment>& dst, vector<int>& src, int limit, int* sum);
+    BitMask LenToBitMask(int len);
 
-    void markOverlaps();
-    void markO(int row, int col);
-    void markX(int row, int col);
-    bool runLine(vector<Segment>& segments, bitm omask, bitm xmask, int limit);
-    bool moveSegment(vector<Segment>& segments, bitm omask, bitm xmask, int idx, int shift_start, int limit, bitm covered, bitm uncovered);
-    bitm updateResult(bitm result, int idx, vector<bitm>& lines, vector<bitm>& crosses);
+#ifdef USE_HEURISTIC_INIT
+    void MarkOverlaps();
+    void MarkO(int row, int col);
+    void MarkX(int row, int col);
+#endif
+    bool RunLine(vector<Segment>& segments, BitMask omask, BitMask xmask, int limit);
+    bool MoveSegment(vector<Segment>& segments, BitMask omask, BitMask xmask, int idx, int shift_start, int limit, BitMask covered, BitMask uncovered);
+    BitMask UpdateResult(BitMask result, int idx, vector<BitMask>& lines, vector<BitMask>& crosses);
 
-    bool isRowFinished(int row);
-    bool isColFinished(int col);
+    bool IsRowFinished(int row);
+    bool IsColFinished(int col);
 
-    void showProgress(int row, int col);
-    void showInternal(int row, int col);
-    char getSymbol(int row, int col);
+    void ShowProgress(int row, int col);
+    void ShowInternal(int row, int col);
+    char GetSymbol(int row, int col);
 
-    static char O, X, U;
+    static char o_, x_, u_;
 };
 
-char Nono::O = '@';
-char Nono::X = '=';
-char Nono::U = '.';
+char Nono::o_ = '@';
+char Nono::x_ = '=';
+char Nono::u_ = '.';
 
 Nono::Nono(vector<vector<int>>& rows, vector<vector<int>>& cols)
 {
     for (auto i = 0; i < 64; i++) {
-        pos_masks[i] = static_cast<bitm>(1) << i;
+        pos_masks_[i] = static_cast<BitMask>(1) << i;
     }
 
-    nrow = static_cast<int>(rows.size());
-    ncol = static_cast<int>(cols.size());
-    printf("rows: %d, cols: %d\n", nrow, ncol);
-    if (nrow > 64 || ncol > 64) {
+    num_row_ = static_cast<int>(rows.size());
+    num_col_ = static_cast<int>(cols.size());
+    printf("rows: %d, cols: %d\n", num_row_, num_col_);
+    if (num_row_ > 64 || num_col_ > 64) {
         throw exception();
     }
-    full_row = lenToBitMask(ncol);
-    full_col = lenToBitMask(nrow);
+    full_row_ = LenToBitMask(num_col_);
+    full_col_ = LenToBitMask(num_row_);
 
     int sum_row = 0, sum_col = 0;
-    segments_row = vector<vector<Segment>>(nrow);
-    segments_col = vector<vector<Segment>>(ncol);
-    for (auto i = 0; i < nrow; i++) {
-        prepareLine(segments_row[i], rows[i], ncol, &sum_row);
+    segments_row_ = vector<vector<Segment>>(num_row_);
+    segments_col_ = vector<vector<Segment>>(num_col_);
+    for (auto i = 0; i < num_row_; i++) {
+        PrepareLine(segments_row_[i], rows[i], num_col_, &sum_row);
     }
-    for (auto i = 0; i < ncol; i++) {
-        prepareLine(segments_col[i], cols[i], nrow, &sum_col);
+    for (auto i = 0; i < num_col_; i++) {
+        PrepareLine(segments_col_[i], cols[i], num_row_, &sum_col);
     }
     if (sum_row != sum_col) {
         printf("Sum of row values %d and col values %d are different\n", sum_row, sum_col);
     }
 
-    omasks_row = vector<bitm>(nrow, 0);
-    omasks_col = vector<bitm>(ncol, 0);
-    xmasks_row = vector<bitm>(nrow, 0);
-    xmasks_col = vector<bitm>(ncol, 0);
+    omasks_row_ = vector<BitMask>(num_row_, 0);
+    omasks_col_ = vector<BitMask>(num_col_, 0);
+    xmasks_row_ = vector<BitMask>(num_row_, 0);
+    xmasks_col_ = vector<BitMask>(num_col_, 0);
 }
 
-void Nono::prepareLine(vector<Segment>& dst, vector<int>& src, int limit, int* sum)
+// Build segments from integer values.
+void Nono::PrepareLine(vector<Segment>& dst, vector<int>& src, int limit, int* sum)
 {
-    auto cnt = src.size();
+    int cnt = static_cast<int>(src.size());
     if (cnt == 1 && src[0] == 0) {
         return;
     }
-    int position = -1;
+    int position = 0;
     for (auto i = 0; i < cnt; i++) {
-        position++;
         int len = src[i];
         Segment segment;
         segment.len = len;
-        segment.mask = lenToBitMask(len);
+        segment.mask = LenToBitMask(len);
         segment.min_shift = position;
         dst.push_back(segment);
-        position += len;
+        position += len + 1;  // Including minimum space.
         *sum += len;
     }
+    position--;  // Remove the last space.
     int margin = limit - position;
     if (margin < 0) {
-        printf("A row with length sum %d does not fit in the column length %d\n", position, limit);
+        printf("Sum of the segments %d does not fit in the row or column length %d\n", position, limit);
     }
     for (auto i = 0; i < cnt; i++) {
         dst[i].max_shift = dst[i].min_shift + margin;
     }
 }
 
-bitm Nono::lenToBitMask(int len)
+BitMask Nono::LenToBitMask(int len)
 {
-    bitm mask = 0;
+    BitMask mask = 0;
     for (auto i = 0; i < len; i++) {
         mask = (mask << 1) | 1;
     }
     return mask;
 }
 
-bool Nono::solve()
+bool Nono::Solve()
 {
-    line_runs = 0;
+    line_runs_ = 0;
+ 
+#ifdef USE_HEURISTIC_INIT
+    MarkOverlaps();
 
-    markOverlaps();
+    BitMask changed_row = accumulate(omasks_col_.begin(), omasks_col_.end(), static_cast<BitMask>(0),
+        [](BitMask x, BitMask y) { return x | y; });
+    changed_row = accumulate(xmasks_col_.begin(), xmasks_col_.end(), changed_row,
+        [](BitMask x, BitMask y) { return x | y; });
 
-    bitm changed_row = accumulate(omasks_col.begin(), omasks_col.end(), static_cast<bitm>(0),
-        [](bitm x, bitm y) { return x | y; });
-    changed_row = accumulate(xmasks_col.begin(), xmasks_col.end(), changed_row,
-        [](bitm x, bitm y) { return x | y; });
-
-    bitm changed_col = accumulate(omasks_row.begin(), omasks_row.end(), static_cast<bitm>(0),
-        [](bitm x, bitm y) { return x | y; });
-    changed_col = accumulate(xmasks_row.begin(), xmasks_row.end(), changed_col,
-        [](bitm x, bitm y) { return x | y; });
+    BitMask changed_col = accumulate(omasks_row_.begin(), omasks_row_.end(), static_cast<BitMask>(0),
+        [](BitMask x, BitMask y) { return x | y; });
+    changed_col = accumulate(xmasks_row_.begin(), xmasks_row_.end(), changed_col,
+        [](BitMask x, BitMask y) { return x | y; });
+#else
+    BitMask changed_row = full_row_;
+    BitMask changed_col = full_col_;
+#endif
 
     bool finished;
     do {
         finished = true;
-        for (auto row = 0; row < nrow; row++) {
-            if (!(changed_row & pos_masks[row])) {
-                finished = finished && isRowFinished(row);
+        for (auto row = 0; row < num_row_; row++) {
+            if (!(changed_row & pos_masks_[row])) {
+                // No need to update unchanged row.
+                finished = finished && IsRowFinished(row);
                 continue;
             }
-            common_omask = full_row;
-            common_xmask = full_row;
-            if (!runLine(segments_row[row], omasks_row[row], xmasks_row[row], ncol)) {
+            common_omask_ = full_row_;  // Updated in RunLine()
+            common_xmask_ = full_row_;  // Updated in RunLine()
+            if (!RunLine(segments_row_[row], omasks_row_[row], xmasks_row_[row], num_col_)) {
                 printf("Cannot solve this problem 1\n");
                 return false;
             }
-            auto changed = updateResult(common_omask, row, omasks_row, omasks_col)
-                | updateResult(common_xmask, row, xmasks_row, xmasks_col);
+            auto changed = UpdateResult(common_omask_, row, omasks_row_, omasks_col_)
+                | UpdateResult(common_xmask_, row, xmasks_row_, xmasks_col_);
             if (changed != 0) {
                 changed_col |= changed;
-                showProgress(row, -1);
+                ShowProgress(row, -1);
             }
-            finished = finished && isRowFinished(row);
-            changed_row ^= pos_masks[row];
+            finished = finished && IsRowFinished(row);
+            changed_row ^= pos_masks_[row];  // Clear bit for this row.
         }
-        for (auto col = 0; col < ncol; col++) {
-            if (!(changed_col & pos_masks[col])) {
-                finished = finished && isColFinished(col);
+        for (auto col = 0; col < num_col_; col++) {
+            if (!(changed_col & pos_masks_[col])) {
+                // No need to update unchanged column.
+                finished = finished && IsColFinished(col);
                 continue;
             }
-            common_omask = full_col;
-            common_xmask = full_col;
-            if (!runLine(segments_col[col], omasks_col[col], xmasks_col[col], nrow)) {
+            common_omask_ = full_col_;  // Updated in RunLine()
+            common_xmask_ = full_col_;  // Updated in RunLine()
+            if (!RunLine(segments_col_[col], omasks_col_[col], xmasks_col_[col], num_row_)) {
                 printf("Cannot solve this problem 2\n");
                 return false;
             }
-            auto changed = updateResult(common_omask, col, omasks_col, omasks_row)
-                | updateResult(common_xmask, col, xmasks_col, xmasks_row);
+            auto changed = UpdateResult(common_omask_, col, omasks_col_, omasks_row_)
+                | UpdateResult(common_xmask_, col, xmasks_col_, xmasks_row_);
             if (changed != 0) {
                 changed_row |= changed;
-                showProgress(-1, col);
+                ShowProgress(-1, col);
             }
-            finished = finished && isColFinished(col);
-            changed_col ^= pos_masks[col];
+            finished = finished && IsColFinished(col);
+            changed_col ^= pos_masks_[col];  // Clear bit for this column.
         }
         if (!changed_row && !changed_col && !finished) {
             printf("No changed line left\n");
@@ -212,77 +239,87 @@ bool Nono::solve()
         }
     } while (!finished);
 
-    printf("Total line runs: %d\n", line_runs);
+    printf("Total line runs: %d\n", line_runs_);
     return true;
 }
 
-void Nono::markOverlaps()
+#ifdef USE_HEURISTIC_INIT
+// Heuristic initial marking for faster solution.
+void Nono::MarkOverlaps()
 {
-    for (auto row = 0; row < nrow; row++) {
+    for (auto row = 0; row < num_row_; row++) {
         bool updated = false;
-        for (auto& segment : segments_row[row]) {
+        for (auto& segment : segments_row_[row]) {
             auto end = segment.min_shift + segment.len;
             for (auto col = segment.max_shift; col < end; col++) {
-                markO(row, col);
+                MarkO(row, col);
                 updated = true;
             }
         }
-        if (segments_row[row].empty()) {
-            for (auto col = 0; col < ncol; col++) {
-                markX(row, col);
+        if (segments_row_[row].empty()) {
+            for (auto col = 0; col < num_col_; col++) {
+                MarkX(row, col);
             }
             updated = true;
         }
-        if (updated) showProgress(row, -1);
+        if (updated) ShowProgress(row, -1);
     }
-    for (auto col = 0; col < ncol; col++) {
+    for (auto col = 0; col < num_col_; col++) {
         bool updated = false;
-        for (auto& segment : segments_col[col]) {
+        for (auto& segment : segments_col_[col]) {
             auto end = segment.min_shift + segment.len;
             for (auto row = segment.max_shift; row < end; row++) {
-                markO(row, col);
+                MarkO(row, col);
                 updated = true;
             }
         }
-        if (segments_col[col].empty()) {
-            for (auto row = 0; row < nrow; row++) {
-                markX(row, col);
+        if (segments_col_[col].empty()) {
+            for (auto row = 0; row < num_row_; row++) {
+                MarkX(row, col);
             }
             updated = true;
         }
-        if (updated) showProgress(-1, col);
+        if (updated) ShowProgress(-1, col);
     }
 }
 
-void Nono::markO(int row, int col)
+void Nono::MarkO(int row, int col)
 {
-    omasks_row[row] |= pos_masks[col];
-    omasks_col[col] |= pos_masks[row];
+    omasks_row_[row] |= pos_masks_[col];
+    omasks_col_[col] |= pos_masks_[row];
 }
 
-void Nono::markX(int row, int col)
+void Nono::MarkX(int row, int col)
 {
-    xmasks_row[row] |= pos_masks[col];
-    xmasks_col[col] |= pos_masks[row];
+    xmasks_row_[row] |= pos_masks_[col];
+    xmasks_col_[col] |= pos_masks_[row];
+}
+#endif  // USE_HEURISTIC_INIT
+
+bool Nono::RunLine(vector<Segment>& segments, BitMask omask, BitMask xmask, int limit)
+{
+    line_runs_++;
+    if (segments.empty()) {
+        common_omask_ = 0;
+        return true;
+    }
+    return MoveSegment(segments, omask, xmask, 0, segments[0].min_shift, limit, 0, 0);
 }
 
-bool Nono::runLine(vector<Segment>& segments, bitm omask, bitm xmask, int limit)
-{
-    line_runs++;
-    return moveSegment(segments, omask, xmask, 0, 0, limit, 0, 0);
-}
-
-bool Nono::moveSegment(vector<Segment>& segments, bitm omask, bitm xmask, int idx, int shift_start, int limit, bitm covered, bitm uncovered)
+// Move segment to all the possible positions.
+// Update common_omask_ and common_xmask_.
+// Recursion. O(limit^segments.size())
+bool Nono::MoveSegment(vector<Segment>& segments, BitMask omask, BitMask xmask, int idx, int shift_start, int limit, BitMask covered, BitMask uncovered)
 {
     if (idx == segments.size()) {
         for (auto i = max(shift_start - 1, 0); i < limit; i++) {
-            uncovered |= pos_masks[i];
+            uncovered |= pos_masks_[i];
         }
         if (uncovered & omask) {
             return false;
         }
-        common_omask &= covered;
-        common_xmask &= uncovered;
+        common_omask_ &= covered;
+        common_xmask_ &= uncovered;
         return true;
     }
     auto res = false;
@@ -291,23 +328,25 @@ bool Nono::moveSegment(vector<Segment>& segments, bitm omask, bitm xmask, int id
     auto seg_len = segment.len;
     for (auto i = shift_start; i <= segment.max_shift; i++) {
         if (i > 0) {
-            uncovered |= pos_masks[i - 1];
+            uncovered |= pos_masks_[i - 1];
         }
         if (uncovered & omask) {
             return res;
         }
-        bitm new_covered = covered | (seg_mask << i);
+        BitMask new_covered = covered | (seg_mask << i);
         if (new_covered & xmask) {
             continue;
         }
-        res |= moveSegment(segments, omask, xmask, idx + 1, i + seg_len + 1, limit, new_covered, uncovered);
+        res |= MoveSegment(segments, omask, xmask, idx + 1, i + seg_len + 1, limit, new_covered, uncovered);
     }
     return res;
 }
 
-bitm Nono::updateResult(bitm result, int idx, vector<bitm>& lines, vector<bitm>& crosses)
+// Update the lines and crosses with result.
+// Returns the bitmask of changed points.
+BitMask Nono::UpdateResult(BitMask result, int idx, vector<BitMask>& lines, vector<BitMask>& crosses)
 {
-    bitm org = lines[idx];
+    BitMask org = lines[idx];
     if (result == org) {
         return 0;
     }
@@ -317,44 +356,44 @@ bitm Nono::updateResult(bitm result, int idx, vector<bitm>& lines, vector<bitm>&
     }
     lines[idx] = result;
 
-    bitm changed = result ^ org;
-    bitm crossUpdated = pos_masks[idx];
+    BitMask changed = result ^ org;
+    BitMask cross_updated = pos_masks_[idx];
     int limit = static_cast<int>(crosses.size());
-    if (limit != nrow && limit != ncol) {
+    if (limit != num_row_ && limit != num_col_) {
         printf("Shouldn't be here 2\n");
         throw exception();
     }
     for (auto i = 0; i < limit; i++) {
-        if (pos_masks[i] & changed) {
-            crosses[i] |= crossUpdated;
+        if (pos_masks_[i] & changed) {
+            crosses[i] |= cross_updated;
         }
     }
     return changed;
 }
 
-bool Nono::isRowFinished(int row)
+bool Nono::IsRowFinished(int row)
 {
-    return (omasks_row[row] | xmasks_row[row]) == full_row;
+    return (omasks_row_[row] | xmasks_row_[row]) == full_row_;
 }
 
-bool Nono::isColFinished(int col)
+bool Nono::IsColFinished(int col)
 {
-    return (omasks_col[col] | xmasks_col[col]) == full_col;
+    return (omasks_col_[col] | xmasks_col_[col]) == full_col_;
 }
 
-void Nono::show()
+void Nono::Show()
 {
-    showInternal(-1, -1);
+    ShowInternal(-1, -1);
 }
 
-void Nono::showProgress(int row, int col)
+void Nono::ShowProgress(int row, int col)
 {
-    if (show_progress) {
-        showInternal(row, col);
+    if (show_progress_) {
+        ShowInternal(row, col);
     }
 }
 
-void Nono::showInternal(int row, int col)
+void Nono::ShowInternal(int row, int col)
 {
     printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n" \
         "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
@@ -366,36 +405,36 @@ void Nono::showInternal(int row, int col)
         printf(" col %d ", col + 1);
     }
     printf("===\n");
-    for (auto col = 0; col < ncol + 2; col++) {
-        if (col % 5 == 0) {
+    for (auto c = 0; c < num_col_ + 2; c++) {
+        if (c % 5 == 0) {
             printf("+ ");
         } else {
             printf("- ");
         }
     }
     printf("\n");
-    for (auto r = 0; r < nrow; r++) {
+    for (auto r = 0; r < num_row_; r++) {
         if (r % 5 == 4) {
             printf("+ ");
         } else {
             printf("| ");
         }
-        for (auto c = 0; c < ncol; c++) {
-            printf("%c ", getSymbol(r, c));
+        for (auto c = 0; c < num_col_; c++) {
+            printf("%c ", GetSymbol(r, c));
         }
         if (r % 5 == 4) {
             printf("+");
         } else {
             printf("|");
         }
-        if (wait_key && col >= 0) {
+        if (wait_key_ && col >= 0) {
             printf("  ");
-            printf("%c ", getSymbol(r, col));
+            printf("%c ", GetSymbol(r, col));
         }
         printf("\n");
     }
-    for (auto col = 0; col < ncol + 2; col++) {
-        if (col % 5 == 0) {
+    for (auto c = 0; c < num_col_ + 2; c++) {
+        if (c % 5 == 0) {
             printf("+ ");
         } else {
             printf("- ");
@@ -403,17 +442,17 @@ void Nono::showInternal(int row, int col)
     }
     printf("\n");
 
-    if (wait_key && row >= 0) {
+    if (wait_key_ && row >= 0) {
         printf("\n  ");
-        for (auto c = 0; c < ncol; c++) {
-            printf("%c ", getSymbol(row, c));
+        for (auto c = 0; c < num_col_; c++) {
+            printf("%c ", GetSymbol(row, c));
         }
         printf("\n");
     } else {
         printf("\n\n");
     }
 
-    if (wait_key) {
+    if (wait_key_) {
         char bb[16];
         fgets(bb, 16, stdin);
     } else {
@@ -421,43 +460,43 @@ void Nono::showInternal(int row, int col)
     }
 }
 
-char Nono::getSymbol(int row, int col)
+char Nono::GetSymbol(int row, int col)
 {
-    auto col_mask = pos_masks[col];
-    auto x = omasks_row[row] & col_mask ? O : U;
-    if (x == U) {
-        x = xmasks_row[row] & col_mask ? X : U;
+    auto col_mask = pos_masks_[col];
+    auto x = omasks_row_[row] & col_mask ? o_ : u_;
+    if (x == u_) {
+        x = xmasks_row_[row] & col_mask ? x_ : u_;
     }
     return x;
 }
 
-void Nono::setOption(bool showProgress, bool waitKey)
+void Nono::SetOption(bool show_progress, bool wait_key)
 {
-    show_progress = showProgress;
-    wait_key = waitKey;
+    show_progress_ = show_progress;
+    wait_key_ = wait_key;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Run and test
 ///////////////////////////////////////////////////////////////////////////////
-static bool showProgress = false;
-static bool waitKey = false;
-static bool longTest = false;
+static bool opt_show_progress = false;
+static bool opt_wait_key = false;
+static bool opt_long_sample = false;
 
-void runCommon(vector<vector<int>>& rows, vector<vector<int>>& cols)
+void RunCommon(vector<vector<int>>& rows, vector<vector<int>>& cols)
 {
     auto start = chrono::system_clock::now();
     Nono nono(rows, cols);
-    nono.setOption(showProgress, waitKey);
-    bool success = nono.solve();
+    nono.SetOption(opt_show_progress, opt_wait_key);
+    bool success = nono.Solve();
     auto end = chrono::system_clock::now();
-    nono.show();
+    nono.Show();
     if (success) printf("SUCCESS: ");
     else printf("FAILURE: ");
     printf("took %lld us.\n", chrono::duration_cast<std::chrono::microseconds>(end - start).count());
 }
 
-void test1()
+void RunLongSample()
 {
     vector<vector<int>> rows({
         vector<int>({2, 1}),
@@ -523,10 +562,10 @@ void test1()
         vector<int>({2, 3, 3, 5}),
         vector<int>({3}),
         });
-    runCommon(rows, cols);
+    RunCommon(rows, cols);
 }
 
-void test2()
+void RunShortSample()
 {
     vector<vector<int>> rows({
         vector<int>({2, 2}),
@@ -552,18 +591,18 @@ void test2()
         vector<int>({6}),
         vector<int>({4}),
         });
-    runCommon(rows, cols);
+    RunCommon(rows, cols);
 }
 
-void test()
+void RunSample()
 {
-    if (longTest)
-        test1();
+    if (opt_long_sample)
+        RunLongSample();
     else
-        test2();
+        RunShortSample();
 }
 
-vector<vector<int>> buildLines(FILE* fp, int nlines)
+vector<vector<int>> BuildLines(FILE* fp, int nlines)
 {
     char buf[256];
     vector<vector<int>> result;
@@ -587,7 +626,7 @@ vector<vector<int>> buildLines(FILE* fp, int nlines)
     return result;
 }
 
-void runFile(const char* filename)
+void RunFile(const char* filename)
 {
     char buf[16];
     FILE* fp = fopen(filename, "r");
@@ -603,22 +642,22 @@ void runFile(const char* filename)
     }
     sscanf(buf, "%d %d", &nrow, &ncol);
     printf("%d rows and %d columns\n", nrow, ncol);
-    auto rows = buildLines(fp, nrow);
+    auto rows = BuildLines(fp, nrow);
     if (rows.size() != nrow) {
         fclose(fp);
         return;
     }
-    auto cols = buildLines(fp, ncol);
+    auto cols = BuildLines(fp, ncol);
     if (cols.size() != ncol) {
         fclose(fp);
         return;
     }
     fclose(fp);
 
-    runCommon(rows, cols);
+    RunCommon(rows, cols);
 }
 
-void setOpt(int argc, const char* argv[])
+void SetOpt(int argc, const char* argv[])
 {
     for (auto i = 1; i < argc; i++) {
         auto a = argv[i];
@@ -628,17 +667,17 @@ void setOpt(int argc, const char* argv[])
         for (auto j = 1; j < l; j++) {
             auto c = a[j];
             if (c == 's') {
-                showProgress = true;
+                opt_show_progress = true;
             } else if (c == 'w') {
-                waitKey = true;
+                opt_wait_key = true;
             } else if (c == 'l') {
-                longTest = true;
+                opt_long_sample = true;
             }
         }
     }
 }
 
-const char* getFilename(int argc, const char* argv[])
+const char* GetFilename(int argc, const char* argv[])
 {
     for (auto i = 1; i < argc; i++) {
         auto a = argv[i];
@@ -650,12 +689,12 @@ const char* getFilename(int argc, const char* argv[])
 
 int main(int argc, const char* argv[])
 {
-    setOpt(argc, argv);
-    auto name = getFilename(argc, argv);
+    SetOpt(argc, argv);
+    auto name = GetFilename(argc, argv);
     if (name == nullptr) {
-        test();
+        RunSample();
     } else {
-        runFile(name);
+        RunFile(name);
     }
     return 0;
 }
